@@ -1,7 +1,7 @@
 use actix_web::{ web,middleware, App, HttpServer,};
 use std::env;
 use crate::db::db_connection::db_pool;
-use routes::user::register;
+use routes::user::{register, login};
 
 mod db;
 mod models;
@@ -20,6 +20,7 @@ async fn main() -> std::io::Result<()> {
    HttpServer::new(move || {
     App::new()
     .service(register)
+    .service(login)
     .app_data(web::Data::new(database.clone()))
     .wrap(middleware::Logger::default())
    })

@@ -1,19 +1,14 @@
 use actix_web::{HttpResponse,post,web::{self,Json}, Responder};
-use chrono::Utc;
-use mongodb::{bson::doc,bson::oid::ObjectId};
+use chrono::{Utc,Duration};
+use mongodb::{bson::doc,bson::oid::ObjectId, Collection};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use crate::models::user::User;
 use::mongodb::Client;
 use bcrypt::{hash,verify};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{ encode,  EncodingKey, Header};
 
 
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    sub: String,
-    exp: usize,
-}
 
 
 #[derive(Debug, Deserialize)]
@@ -23,13 +18,22 @@ pub struct RegisterRequest {
     pub password: String,
 }
 
+    #[derive(Serialize)]
+    pub struct RegsiterRespon{
+        pub status:String,
+        pub msg:String
+    }
+
 #[post("/register")]
 async fn register(db: web::Data<Client>, req: Json<RegisterRequest>) -> impl Responder {
     let col = db.database("rustecom").collection("users");
 
     //check if email is valid
     match col.find_one(doc! {"email":&req.email}, None).await.unwrap() {
-        Some(_) => return HttpResponse::Conflict().body("Email already exist!"),
+        Some(_) => return HttpResponse::BadRequest().json(&RegsiterRespon{
+             status:"400".to_string(),
+            msg:"Email already exist!".to_string(),
+        }),
         _ => (),
     }
     //  if let Some(_) = user.find_one(doc! {"email":&req.email}, None).await.unwrap(){
@@ -51,31 +55,60 @@ async fn register(db: web::Data<Client>, req: Json<RegisterRequest>) -> impl Res
         created_at:bson::DateTime::now().into(),
         updated_at:bson::DateTime::now().into(),
     };
-
     let result = col.insert_one(new_user,None).await;
 
+
+let message_response = RegsiterRespon {
+    status:"200".to_string(),
+    msg:"Register successfully".to_string(),
+};
       match result{
-          Ok(_) => HttpResponse::Ok().body("register successfully"),
+          Ok(_) => {
+            HttpResponse::Ok().json(message_response)
+        }
         Err(err) => {
             println!("Error while getting, {:?}", err);
             HttpResponse::InternalServerError().finish()
         }
     }
+}
 
-    // let hashed_password = hash(&user.password, 10);
 
-    // let data = doc! {
-    //     // "fullname":user.fullname.to_owned(),
-    //     "email":user.email.to_owned(),
-    //     "password":hashed_password,
-    // };
+#[derive(Debug, Deserialize)]
+pub struct LoginRequest {
+    pub email:String,
+    pub password: String,
+}
 
-    // let result = collection.insert_one(data, None).await;
-    // match result{
-    //       Ok(_) => HttpResponse::Ok().body("register successfully"),
-    //     Err(err) => {
-    //         println!("Error while getting, {:?}", err);
-    //         HttpResponse::InternalServerError().finish()
-    //     }
-    // }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Claims {
+    pub sub: Option<ObjectId>,
+    pub fullname: String,
+    pub exp: usize,
+}
+
+#[post("/login")]
+async fn login (db: web::Data<Client>, req: Json<LoginRequest>) -> impl Responder {
+       let col:Collection<User> = db.database("rustecom").collection("users");
+    let data = &LoginRequest{
+        email: req.email.clone(),
+        password:req.password.clone(),
+    };
+    // check if email valid
+    if let Ok(Some(user)) = col.find_one(doc! {"email":&data.email.clone()}, None).await {
+        // let hashed_password = user.get_str("password").unwrap();
+        //verify password
+        if let Ok(valid) = verify(&req.password, &user.password){
+            if valid {
+                //Generate JWT Token
+                let token = encode(&Header::default(), &Claims {
+                    sub:user._id.clone(),
+                    fullname:user.fullname.clone(),
+                    exp:(Utc::now() + Duration::hours(24)).timestamp() as usize,
+                }, &EncodingKey::from_secret("JWT_SECRET".as_ref()),).unwrap();
+               return HttpResponse::Ok().json(json!({ "token": token }));
+            }
+        }
+    }
+    HttpResponse::Unauthorized().finish()
 }
